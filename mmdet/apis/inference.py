@@ -121,7 +121,7 @@ ImagesType = Union[str, np.ndarray, Sequence[str], Sequence[np.ndarray]]
 
 def inference_detector(
     model: nn.Module,
-    imgs: ImagesType,
+    imgs: np.ndarray,
     test_pipeline: Optional[Compose] = None,
     text_prompt: Optional[str] = None,
     custom_entities: bool = False,
@@ -130,8 +130,7 @@ def inference_detector(
 
     Args:
         model (nn.Module): The loaded detector.
-        imgs (str, ndarray, Sequence[str/ndarray]):
-           Either image files or loaded images.
+        imgs (np.ndarray): The loaded images.
         test_pipeline (:obj:`Compose`): Test pipeline.
 
     Returns:
@@ -139,12 +138,6 @@ def inference_detector(
         If imgs is a list or tuple, the same length list type results
         will be returned, otherwise return the detection results directly.
     """
-
-    if isinstance(imgs, (list, tuple)):
-        is_batch = True
-    else:
-        imgs = [imgs]
-        is_batch = False
 
     cfg = model.cfg
 
@@ -164,36 +157,25 @@ def inference_detector(
                 m, RoIPool
             ), 'CPU inference with RoIPool is not supported currently.'
 
-    result_list = []
+    # Prepare data
+    data_list = []
     for i, img in enumerate(imgs):
-        # prepare data
-        if isinstance(img, np.ndarray):
-            # TODO: remove img_id.
-            data_ = dict(img=img, img_id=0)
-        else:
-            # TODO: remove img_id.
-            data_ = dict(img_path=img, img_id=0)
+        data = dict(img=img, img_id=i)
 
         if text_prompt:
-            data_['text'] = text_prompt
-            data_['custom_entities'] = custom_entities
+            data['text'] = text_prompt
+            data['custom_entities'] = custom_entities
 
-        # build the data pipeline
-        data_ = test_pipeline(data_)
+        data_list.append(test_pipeline(data))
 
-        data_['inputs'] = [data_['inputs']]
-        data_['data_samples'] = [data_['data_samples']]
+    # Collate into a batch
+    batch = default_collate(data_list)
 
-        # forward the model
-        with torch.no_grad():
-            results = model.test_step(data_)[0]
+    # Forward pass
+    with torch.no_grad():
+        results = model.test_step(batch)
 
-        result_list.append(results)
-
-    if not is_batch:
-        return result_list[0]
-    else:
-        return result_list
+    return results
 
 
 # TODO: Awaiting refactoring
